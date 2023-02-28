@@ -1192,7 +1192,6 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 				INFO("Add known answer: Name: %s, Type: %d", c->rr.name, c->rr.type);
 				message_an(m, q->name, (unsigned short)q->type, (unsigned short)d->class, c->rr.ttl - (unsigned long)d->now.tv_sec);
 				_a_copy(m, &c->rr);
-				_a_additional_record(m, r, d->class);
 			}
 		}
 		d->checkqlist = nextbest;
