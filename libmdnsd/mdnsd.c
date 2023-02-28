@@ -86,6 +86,7 @@ struct mdns_record {
 	void *arg;
 	struct timeval last_sent;
 	struct mdns_record *next, *list;
+	struct mdns_answer *ptr, *srv, *txt, *a;
 };
 
 struct mdns_daemon {
@@ -629,6 +630,28 @@ static void _a_copy(struct message *m, mdns_answer_t *a)
 		message_rdata_name(m, a->rdname);
 }
 
+static void _a_additional_record(struct message *m, mdns_record_t *r, int class)
+{
+	if (r->rr.type == QTYPE_PTR) {
+		if (r->srv) {
+			message_ar(m, r->srv->name, QTYPE_SRV, class, r->srv->ttl);
+			_a_copy(m, r->srv);
+		}
+
+		if (r->txt) {
+			message_ar(m, r->txt->name, QTYPE_TXT, class, r->txt->ttl);
+			_a_copy(m, r->txt);
+		}
+    }
+
+    if (r->rr.type == QTYPE_PTR || r->rr.type == QTYPE_SRV) {
+		if (r->a) {
+			message_ar(m, r->a->name, QTYPE_A, class, r->a->ttl);
+			_a_copy(m, r->a);
+		}
+	}
+}
+
 /* Copy a published record into an outgoing message */
 static int _r_out(mdns_daemon_t *d, struct message *m, mdns_record_t **list)
 {
@@ -660,6 +683,7 @@ static int _r_out(mdns_daemon_t *d, struct message *m, mdns_record_t **list)
 		r->last_sent = d->now;
 
 		_a_copy(m, &r->rr);
+		_a_additional_record(m, r, d->class);
 
 		r->modified = 0; /* If updated we've now sent the update. */
 		if (r->rr.ttl == 0) {
@@ -1007,6 +1031,7 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 		message_an(m, u->r->rr.name, u->r->rr.type, d->class, u->r->rr.ttl);
 		u->r->last_sent = d->now;
 		_a_copy(m, &u->r->rr);
+		_a_additional_record(m, u->r, d->class);
 		free(u);
 
 		return 1;
@@ -1040,6 +1065,7 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 			else
 				message_an(m, cur->rr.name, cur->rr.type, d->class, cur->rr.ttl);
 			_a_copy(m, &cur->rr);
+			_a_additional_record(m, cur, d->class);
 			cur->last_sent = d->now;
 
 			if (cur->rr.ttl != 0 && cur->tries < 4) {
@@ -1166,6 +1192,7 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 				INFO("Add known answer: Name: %s, Type: %d", c->rr.name, c->rr.type);
 				message_an(m, q->name, (unsigned short)q->type, (unsigned short)d->class, c->rr.ttl - (unsigned long)d->now.tv_sec);
 				_a_copy(m, &c->rr);
+				_a_additional_record(m, r, d->class);
 			}
 		}
 		d->checkqlist = nextbest;
@@ -1313,6 +1340,33 @@ mdns_record_t *mdnsd_record_next(const mdns_record_t* r)
 const mdns_answer_t *mdnsd_record_data(const mdns_record_t* r)
 {
 	return &r->rr;
+}
+
+static void mdnsd_link_records_(mdns_record_t* rec, mdns_record_t* ans)
+{
+    switch (ans->rr.type){
+        case QTYPE_A:
+            rec->a = &(ans->rr);
+            break;
+        case QTYPE_PTR:
+            rec->ptr = &(ans->rr);
+            break;
+        case QTYPE_TXT:
+            rec->txt = &(ans->rr);
+            break;
+        case QTYPE_SRV:
+            rec->srv = &(ans->rr);
+            break;
+        default:
+            break;
+    }
+
+}
+
+void mdnsd_link_records(mdns_record_t* rec, mdns_record_t* ans)
+{
+	mdnsd_link_records_(rec, ans);
+	mdnsd_link_records_(ans, rec);
 }
 
 mdns_record_t *mdnsd_shared(mdns_daemon_t *d, const char *host, unsigned short type, unsigned long ttl)

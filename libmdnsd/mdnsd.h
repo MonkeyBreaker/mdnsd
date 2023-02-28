@@ -180,6 +180,13 @@ struct timeval *mdnsd_sleep(mdns_daemon_t *d);
  */
 void mdnsd_query(mdns_daemon_t *d, const char *host, int type, int (*answer)(mdns_answer_t *a, void *arg), void *arg);
 
+
+/**
+ * link record to another mdns record of different type and vice-versa
+ * used for additional records
+ */
+void mdnsd_link_records(mdns_record_t* rec, mdns_record_t* ans);
+
 /**
  * Returns the first (if last == NULL) or next answer after last from
  * the cache mdns_answer_t only valid until an I/O function is called

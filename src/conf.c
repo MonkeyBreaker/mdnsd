@@ -177,7 +177,7 @@ static int load(struct iface *iface, char *path, char *hostname)
 	mdns_daemon_t *d = iface->mdns;
 	struct conf_srec srec;
 	unsigned char *packet;
-	mdns_record_t *r;
+	mdns_record_t *r, *serv_ptr, *selec_ptr, *srv;
 	size_t i;
 	xht_t *h;
 	char hlocal[256], nlocal[256], tlocal[256];
@@ -201,17 +201,22 @@ static int load(struct iface *iface, char *path, char *hostname)
 		srec.target = strdup(hlocal);
 
 	/* Announce that we have a $type service */
-	record(iface, 1, tlocal, DISCO_NAME, QTYPE_PTR, 120);
-	record(iface, 1, srec.target, tlocal, QTYPE_PTR, 120);
+	serv_ptr = record(iface, 1, tlocal, DISCO_NAME, QTYPE_PTR, 120);
+	selec_ptr = record(iface, 1, srec.target, tlocal, QTYPE_PTR, 120);
 
-	r = record(iface, 0, NULL, hlocal, QTYPE_SRV, 120);
-	mdnsd_set_srv(d, r, 0, 0, srec.port, nlocal);
+	srv = record(iface, 0, NULL, hlocal, QTYPE_SRV, 120);
+	mdnsd_set_srv(d, srv, 0, 0, srec.port, nlocal);
+	mdnsd_link_records(serv_ptr, srv);
+	mdnsd_link_records(selec_ptr, srv);
 
 	/* If an IPv4 address is already set, add an A record for it. */
 	struct in_addr ipv4addr = mdnsd_get_address(d);
 	if (ipv4addr.s_addr != 0) {
 		r = record(iface, 0, NULL, nlocal, QTYPE_A, 120);
 		mdnsd_set_ip(d, r, ipv4addr);
+		mdnsd_link_records(serv_ptr, r);
+		mdnsd_link_records(selec_ptr, r);
+		mdnsd_link_records(srv, r);
 	}
 
 	/* If an IPv6 address is already set, add an AAAA record for it. */
@@ -224,6 +229,8 @@ static int load(struct iface *iface, char *path, char *hostname)
 	if (srec.cname)
 		record(iface, 1, srec.cname, nlocal, QTYPE_CNAME, 120);
 	r = record(iface, 0, NULL, hlocal, QTYPE_TXT, 4500);
+	mdnsd_link_records(serv_ptr, r);
+	mdnsd_link_records(selec_ptr, r);
 
 	h = xht_new(11);
 	for (i = 0; i < srec.txt_num; i++) {
