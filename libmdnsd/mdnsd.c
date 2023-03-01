@@ -656,7 +656,8 @@ static void _a_additional_record(struct message *m, mdns_record_t *r, int class)
 static int _r_out(mdns_daemon_t *d, struct message *m, mdns_record_t **list)
 {
 	mdns_record_t *r;
-	int ret = 0;
+	mdns_record_t *begin = *list;
+	int ret = 0, to_free;
 
 	while ((r = *list) != NULL && message_packet_len(m) + (int)_rr_len(&r->rr) < d->frame) {
 		if (r != r->list)
@@ -683,9 +684,47 @@ static int _r_out(mdns_daemon_t *d, struct message *m, mdns_record_t **list)
 		r->last_sent = d->now;
 
 		_a_copy(m, &r->rr);
-		_a_additional_record(m, r, d->class);
 
 		r->modified = 0; /* If updated we've now sent the update. */
+	}
+
+	*list = begin;
+	while ((r = *list) != NULL && message_packet_len(m) + (int)_rr_len(&r->rr) < d->frame) {
+
+		if (r != r->list)
+			*list = r->list;
+		else
+			*list = NULL;
+
+		/* Service enumeration/discovery, drop non-PTR replies */
+		if (d->disco) {
+			if (r->rr.type != QTYPE_PTR)
+				continue;
+
+			if (strcmp(r->rr.name, DISCO_NAME))
+				continue;
+		}
+
+		_a_additional_record(m, r, d->class);
+	}
+
+	to_free = ret;
+	*list = begin;
+	while (to_free > 0 && (r = *list) != NULL) {
+		if (r != r->list)
+			*list = r->list;
+		else
+			*list = NULL;
+
+		/* Service enumeration/discovery, drop non-PTR replies */
+		if (d->disco) {
+			if (r->rr.type != QTYPE_PTR)
+				continue;
+
+			if (strcmp(r->rr.name, DISCO_NAME))
+				continue;
+		}
+
 		if (r->rr.ttl == 0) {
 			/*
 			 * also remove from other lists, because record
@@ -694,6 +733,8 @@ static int _r_out(mdns_daemon_t *d, struct message *m, mdns_record_t **list)
 			_r_remove_lists(d, r, list);
 			_r_done(d, r);
 		}
+
+		--to_free;
 	}
 
 	return ret;
@@ -1043,7 +1084,8 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 
 	/* Check if it's time to send the publish retries (unlink if done) */
 	if (!d->probing && d->a_publish && _tvdiff(d->now, d->publish) <= 0) {
-		mdns_record_t *cur = d->a_publish;
+		mdns_record_t *first = d->a_publish;
+		mdns_record_t *cur = first;
 		mdns_record_t *last = NULL;
 		mdns_record_t *next;
 
@@ -1065,7 +1107,6 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 			else
 				message_an(m, cur->rr.name, cur->rr.type, d->class, cur->rr.ttl);
 			_a_copy(m, &cur->rr);
-			_a_additional_record(m, cur, d->class);
 			cur->last_sent = d->now;
 
 			if (cur->rr.ttl != 0 && cur->tries < 4) {
@@ -1079,6 +1120,18 @@ int mdnsd_out(mdns_daemon_t *d, struct message *m, struct in_addr *ip, unsigned 
 				d->a_publish = next;
 			if (last)
 				last->list = next;
+			cur = next;
+		}
+
+		// Load Additional records
+		cur = first;
+		while (cur && message_packet_len(m) + (int)_rr_len(&cur->rr) < d->frame) {
+			_a_additional_record(m, cur, d->class);
+		}
+		// Check for free expired records
+		cur = first;
+		while (cur) {
+			next = cur->list;
 			if (cur->rr.ttl == 0)
 				_r_done(d, cur);
 			cur = next;
